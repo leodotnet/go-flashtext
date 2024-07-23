@@ -1,5 +1,11 @@
 # go-flashtext
 
+In this version, we fix bugs for failure of extracting two consecutive keywords in the previous version.
+
+
+
+
+
 This module can be used to replace keywords in sentences or extract keywords from sentences. It is based on the [FlashText algorithm](https://arxiv.org/abs/1711.00046).
 
 Compared with standard [FlashText algorithm](https://arxiv.org/abs/1711.00046)， there are some differences which make [go-flashtext](https://github.com/waltsmith88/go-flashtext) more powerful:
