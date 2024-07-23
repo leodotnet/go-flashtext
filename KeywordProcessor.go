@@ -319,8 +319,10 @@ func (KeywordProcessor *keywordProcessor) RemoveKeyword(keyword string) bool {
 
 // Extract keywords from sentence by searching TrieTree.
 // And return the keywords' clean names.
-func (KeywordProcessor *keywordProcessor) ExtractKeywords(sentence string) []string {
-	var keywordList 	[]string
+func (KeywordProcessor *KeywordProcessor) ExtractKeywords(sentence string) []string {
+	var keywordList []string
+	var keywordListSpanInfo []keywordRes
+
 	if len(sentence) == 0 {
 		return keywordList
 	}
@@ -329,48 +331,147 @@ func (KeywordProcessor *keywordProcessor) ExtractKeywords(sentence string) []str
 	}
 
 	var (
-		start 			[]int
-		sentenceRune	= []rune(sentence)
-		idx				= 0
-		idy 			= 0
-		sentenceLen		= len(sentenceRune)
-		cleanName 		= ""
-		currentDict 	= KeywordProcessor.keywordTrieDict
+		seqStartIndex = 0
+		seqEndIndex   = 0
+
+		sentenceRune = []rune(sentence)
+		idx          = 0
+		idy          = 0
+		sentenceLen  = len(sentenceRune)
+		currentDict  = KeywordProcessor.keywordTrieDict
+
+		resetCurrentDict = false
+
+		sequenceFound = ""
 	)
 
 	for idx < sentenceLen {
 		char := sentenceRune[idx]
-		tmpCurrent, err := currentDict[int32(char)].(map[int32]interface{})
-		if err {
-			start = append(start, idx)
-			idx++
-			idy++
-			if cleanNameTmp, err := tmpCurrent[__key__]; err {
-				cleanName = cleanNameTmp.(string)
+		var innerChar rune = 0
+		//when we reach a character that might denote word end
+
+		_, char_exist := currentDict[int32(char)]
+
+		// check if char is in nonWordBoundaries, i.e. it is not a letter a digit
+		if !strings.Contains(KeywordProcessor.nonWordBoundaries, string(char)) {
+
+			//get currentDict[__key__] else return err
+			_, _key_exist := currentDict[__key__]
+
+			// if end if present in currentDict
+			sequenceFound = ""
+			isLongestSequenceFound := false
+			longestSequenceFound := ""
+			if _key_exist || char_exist {
+				if _key_exist {
+					sequenceFound = currentDict[__key__].(string)
+					longestSequenceFound = sequenceFound
+					seqEndIndex = idx
+				}
+
+				// re look for longest_sequence from this position
+
+				if char_exist {
+					currentDictContinued := currentDict[int32(char)].(map[int32]interface{})
+
+					idy = idx + 1
+					isBreak := false
+					for idy < sentenceLen {
+						innerChar = sentenceRune[idy]
+
+						innerCharInNonWordBoundaries := strings.Contains(KeywordProcessor.nonWordBoundaries, string(innerChar))
+						_, _keyExistInCurrentDictContinue := currentDictContinued[__key__]
+
+						if !innerCharInNonWordBoundaries && _keyExistInCurrentDictContinue {
+							// update longest sequence found
+							longestSequenceFound = currentDictContinued[__key__].(string)
+							seqEndIndex = idy
+							isLongestSequenceFound = true
+						}
+
+						// if innerChar in currentDictContinued
+						if _, innerCharExist := currentDictContinued[int32(innerChar)]; innerCharExist {
+							currentDictContinued = currentDictContinued[int32(innerChar)].(map[int32]interface{})
+						} else {
+							isBreak = true
+							break
+						}
+
+						idy++
+
+					}
+
+					if !isBreak {
+						_, _keyExistInCurrentDictContinue := currentDictContinued[__key__]
+						if _keyExistInCurrentDictContinue {
+							longestSequenceFound = currentDictContinued[__key__].(string)
+							seqEndIndex = idy
+							isLongestSequenceFound = true
+
+						}
+					}
+
+					if isLongestSequenceFound {
+						idx = seqEndIndex - 1
+					}
+
+				}
+
+				currentDict = KeywordProcessor.keywordTrieDict
+				if longestSequenceFound != "" {
+					keywordList = append(keywordList, longestSequenceFound)
+
+					res := keywordRes{longestSequenceFound, seqStartIndex, seqEndIndex}
+					keywordListSpanInfo = append(keywordListSpanInfo, res)
+
+				}
+
+				resetCurrentDict = true
+
+			} else {
+				currentDict = KeywordProcessor.keywordTrieDict
+				resetCurrentDict = true
 			}
-			currentDict = tmpCurrent
-			if idx < sentenceLen {
-				continue
-			}
+
+		} else if char_exist {
+			currentDict = currentDict[int32(char)].(map[int32]interface{})
 		} else {
-			idx++
-			idy++
 			currentDict = KeywordProcessor.keywordTrieDict
+			resetCurrentDict = true
+
+			idy = idx + 1
+			for idy < sentenceLen {
+				char := sentenceRune[idy]
+				// char not in nonWordBoundaries
+				if !strings.Contains(KeywordProcessor.nonWordBoundaries, string(char)) {
+					break
+				}
+				idy++
+			}
+
+			idx = idy
+
 		}
 
-		if cleanName != "" {
-			keywordList = append(keywordList, cleanName)
-			idx = start[len(start)-1] + 1
-			idy = idx + 1
-			cleanName = ""
-			start = []int{}
-		} else {
-			if len(start) > 0 {
-				idx = start[0] + 1
-				idy = idx + 1
+		// if we are end of sentence and have a sequence discovered
+		if idx+1 >= sentenceLen {
+			// if _key_ in currentDict
+			if _, _keyExist := currentDict[__key__]; _keyExist {
+				sequenceFound = currentDict[__key__].(string)
+				keywordList = append(keywordList, sequenceFound)
+
+				res := keywordRes{sequenceFound, seqStartIndex, seqEndIndex}
+				keywordListSpanInfo = append(keywordListSpanInfo, res)
 			}
-			start = []int{}
 		}
+
+		idx++
+
+		if resetCurrentDict {
+			resetCurrentDict = false
+			seqStartIndex = idx
+		}
+
 	}
 	return keywordList
 }
@@ -378,7 +479,9 @@ func (KeywordProcessor *keywordProcessor) ExtractKeywords(sentence string) []str
 // Extract keywords from sentence by searching TrieTree.
 // And return the keywords' clean names, the start position and the end position of keyword in sentence.
 func (KeywordProcessor *keywordProcessor) ExtractKeywordsWithSpanInfo(sentence string) []keywordRes {
-	var keywordList []keywordRes
+	var keywordList []string
+	var keywordListSpanInfo []keywordRes
+
 	if len(sentence) == 0 {
 		return keywordList
 	}
@@ -387,50 +490,149 @@ func (KeywordProcessor *keywordProcessor) ExtractKeywordsWithSpanInfo(sentence s
 	}
 
 	var (
-		start 			[]int
-		idx				= 0
-		idy 			= 0
-		cleanName 		= ""
-		sentenceRune 	= []rune(sentence)
-		sentenceLen 	= len(sentenceRune)
-		currentDict 	= KeywordProcessor.keywordTrieDict
+		seqStartIndex = 0
+		seqEndIndex   = 0
+
+		sentenceRune = []rune(sentence)
+		idx          = 0
+		idy          = 0
+		sentenceLen  = len(sentenceRune)
+		currentDict  = KeywordProcessor.keywordTrieDict
+
+		resetCurrentDict = false
+
+		sequenceFound = ""
 	)
 
 	for idx < sentenceLen {
 		char := sentenceRune[idx]
-		tmpCurrent, err := currentDict[int32(char)].(map[int32]interface{})
-		if err {
-			start = append(start, idx)
-			idx++
-			idy++
-			if cleanNameTmp, err := tmpCurrent[__key__]; err {
-				cleanName = cleanNameTmp.(string)
+		var innerChar rune = 0
+		//when we reach a character that might denote word end
+
+		_, char_exist := currentDict[int32(char)]
+
+		// check if char is in nonWordBoundaries, i.e. it is not a letter a digit
+		if !strings.Contains(KeywordProcessor.nonWordBoundaries, string(char)) {
+
+			//get currentDict[__key__] else return err
+			_, _key_exist := currentDict[__key__]
+
+			// if end if present in currentDict
+			sequenceFound = ""
+			isLongestSequenceFound := false
+			longestSequenceFound := ""
+			if _key_exist || char_exist {
+				if _key_exist {
+					sequenceFound = currentDict[__key__].(string)
+					longestSequenceFound = sequenceFound
+					seqEndIndex = idx
+				}
+
+				// re look for longest_sequence from this position
+
+				if char_exist {
+					currentDictContinued := currentDict[int32(char)].(map[int32]interface{})
+
+					idy = idx + 1
+					isBreak := false
+					for idy < sentenceLen {
+						innerChar = sentenceRune[idy]
+
+						innerCharInNonWordBoundaries := strings.Contains(KeywordProcessor.nonWordBoundaries, string(innerChar))
+						_, _keyExistInCurrentDictContinue := currentDictContinued[__key__]
+
+						if !innerCharInNonWordBoundaries && _keyExistInCurrentDictContinue {
+							// update longest sequence found
+							longestSequenceFound = currentDictContinued[__key__].(string)
+							seqEndIndex = idy
+							isLongestSequenceFound = true
+						}
+
+						// if innerChar in currentDictContinued
+						if _, innerCharExist := currentDictContinued[int32(innerChar)]; innerCharExist {
+							currentDictContinued = currentDictContinued[int32(innerChar)].(map[int32]interface{})
+						} else {
+							isBreak = true
+							break
+						}
+
+						idy++
+
+					}
+
+					if !isBreak {
+						_, _keyExistInCurrentDictContinue := currentDictContinued[__key__]
+						if _keyExistInCurrentDictContinue {
+							longestSequenceFound = currentDictContinued[__key__].(string)
+							seqEndIndex = idy
+							isLongestSequenceFound = true
+
+						}
+					}
+
+					if isLongestSequenceFound {
+						idx = seqEndIndex - 1
+					}
+
+				}
+
+				currentDict = KeywordProcessor.keywordTrieDict
+				if longestSequenceFound != "" {
+					keywordList = append(keywordList, longestSequenceFound)
+
+					res := keywordRes{longestSequenceFound, seqStartIndex, seqEndIndex}
+					keywordListSpanInfo = append(keywordListSpanInfo, res)
+
+				}
+
+				resetCurrentDict = true
+
+			} else {
+				currentDict = KeywordProcessor.keywordTrieDict
+				resetCurrentDict = true
 			}
-			currentDict = tmpCurrent
-			continue
+
+		} else if char_exist {
+			currentDict = currentDict[int32(char)].(map[int32]interface{})
 		} else {
-			idx++
-			idy++
 			currentDict = KeywordProcessor.keywordTrieDict
-		}
-		if cleanName != "" {
-			startIndex := start[0]
-			endIndex := start[0] + len(start)
-			res := keywordRes{cleanName, startIndex, endIndex}
-			keywordList = append(keywordList, res)
-			idx = start[len(start)-1] + 1
-			idy = idx
-			cleanName = ""
-			start = []int{}
-		} else {
-			if len(start) > 0 {
-				idx = start[0] + 1
-				idy = idx
+			resetCurrentDict = true
+
+			idy = idx + 1
+			for idy < sentenceLen {
+				char := sentenceRune[idy]
+				// char not in nonWordBoundaries
+				if !strings.Contains(KeywordProcessor.nonWordBoundaries, string(char)) {
+					break
+				}
+				idy++
 			}
-			start = []int{}
+
+			idx = idy
+
 		}
+
+		// if we are end of sentence and have a sequence discovered
+		if idx+1 >= sentenceLen {
+			// if _key_ in currentDict
+			if _, _keyExist := currentDict[__key__]; _keyExist {
+				sequenceFound = currentDict[__key__].(string)
+				keywordList = append(keywordList, sequenceFound)
+
+				res := keywordRes{sequenceFound, seqStartIndex, seqEndIndex}
+				keywordListSpanInfo = append(keywordListSpanInfo, res)
+			}
+		}
+
+		idx++
+
+		if resetCurrentDict {
+			resetCurrentDict = false
+			seqStartIndex = idx
+		}
+
 	}
-	return keywordList
+	return keywordListSpanInfo
 }
 
 // Replace keywords in sentence with their cleanName
